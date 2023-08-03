@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ディープラーニング（三平方の定理を学習）</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.0.0/dist/tf.min.js">   //TensorFlowライブラリを読み込む
+</script>
+<script>
+let canvas, context;        //キャンバス
+let model, eNum, ox, oy;    //モデル、学習回数、終点座標
+
+const init = () => {
+    //キャンバスの取得
+    canvas = document.getElementById("graph");  //グラフ作成エリアの取得
+    context = canvas.getContext("2d");
+    //初期化
+    initGraph();
+    document.getElementById("predButton").disabled = true;  //予測ボタンを無効化
+}
+
+const initGraph = () => {
+    //グラフ軸、ラベルの描画
+    context.clearRect(0,0,canvas.width,canvas.height);
+    drawLine(50, 0, 50, 150);                           //グラフのＸ軸Ｙ軸を描画
+    drawLine(50,150,550,150);
+    context.font = "12px sans-serif";
+    context.textAlign = "right";
+    context.fillText("0.2", 40, 50);                    //Y軸の目盛りの値を表示
+    context.fillText("0.1", 40, 100);
+    context.fillText("0", 40, 150);
+    [ox, oy] = [-1, -1];
+}
+
+const drawLine = (x1, y1, x2, y2, color = "#000000") => {   //colorのデフォルト値は黒
+    //線の描画
+    context.strokeStyle = color;
+    context.beginPath();                //(x1, y1)から(x2, y2)までの直線を描く
+    context.moveTo(x1, y1);
+    context.lineTo(x2, y2);
+    context.stroke();
+}
+
+const showProgress = (epoch, log) => {
+    //進捗の表示
+    document.getElementById("status").innerText = "トレーニング中...";      //ステータスとプログラスバーに進捗状況を表示
+    document.getElementById("status").innerText += `${epoch + 1}/${eNum}`;
+    document.getElementById("progress").value = epoch + 1;
+    //損失グラフの描画
+    document.getElementById("loss").innerText = log.loss;               //lossに損失データを表示
+    const [x, y] = [50 + epoch * 500/eNum, 150 - log.loss * 500];       //損失データの推移をグラフに表示
+    if (ox < 0) [ox, oy] = [x, y];
+    drawLine(ox, oy, x, y, "#0000FF");
+    [ox, oy] = [x, y];
+}
+
+const sample = (a,b) => {
+    //データのサンプル（三平方の定理）
+    return (a**2 + b**2) ** 0.5;    //ルートaの二乗足すbの二乗
+}
+
+const learn = async() => {  //learnを非同期関数として定義
+    //ボタンの無効化
+    document.getElementById("learnButton").disabled = true;     //開始ボタンを無効化
+    document.getElementById("predButton").disabled = true;
+    //グラフ軸、ラベルの描画
+    initGraph();
+    //サンプルデータの作成
+    const sNum = Number(document.getElementById("sNum").value); //サンプル数を取得
+    const inputData = new Array();
+    const answerData = new Array();
+    for(let i=0; i<sNum; i++){
+        const [a,b] = [Math.random(), Math.random()];           //変数ａ，ｂに０から１の間の乱数を代入
+        inputData.push([a,b]);
+        answerData.push(sample(a,b));
+    }
+    const input = tf.tensor(inputData);                         //配列をテンソルに変換
+    const answer = tf.tensor(answerData);
+    //モデルの作成
+    model = tf.sequential();
+    const layer = Number(document.getElementById("layer").value);   //中間層数とニューロン数を取得
+    const n = Number(document.getElementById("neuron").value);
+    //入力層
+    model.add(tf.layers.dense({units:n, activation:"relu", inputShape:[2]}));
+    //中間層
+    for (let i=0; i<layer; i++) {
+        model.add(tf.layers.dense({units:n, activation:"relu"}));
+    }
+    //出力層
+    model.add(tf.layers.dense({units:1, activation:"linear"}));
+    model.compile({optimizer:"sgd", loss:"meanSquaredError"});
+    //トレーニング
+    eNum = Number(document.getElementById("eNum").value);           //学習回数を取得
+    document.getElementById("progress").value = 0;
+    document.getElementById("predButton").max = eNum;
+    document.getElementById("status").innerText = "トレーニング開始";
+    await model.fit(input, answer, {
+        epochs: eNum,
+        callbacks:{
+            onEpochEnd: showProgress                                //学習1回ごとにshowProgress関数を呼び出す
+        }
+    });
+    document.getElementById("status").innerText = "トレーニング終了";
+    input.dispose();                                                //サンプルデータを破棄
+    answer.dispose();
+    //ボタンの有効化
+    document.getElementById("learnButton").disabled = false;
+    document.getElementById("predButton").disabled = false;
+}
+
+const predict = () => {
+    //直角を挟む2辺の取得
+    const a = Number(document.getElementById("a").value);       //直角を挟む2辺a、bを取得
+    const b = Number(document.getElementById("b").value);
+    let scale = b;                                              //a,bのうち大きい方を倍率とする
+    if(a > b) scale = a;
+    const [a1, b1] = [a/scale, b/scale];                        //a,bを0から1の間の数値に変換
+    //斜辺の長さの予測
+    let pAnswer = model.predict(tf.tensor([[a1,b1]])).dataSync()[0];    //予測値を求める
+    pAnswer *= scale;
+    //結果を表示
+    const rAnswer = sample(a,b);
+    const error = Math.abs(pAnswer - rAnswer)/rAnswer*100;      //正解との誤差（％）を計算
+    const result = document.getElementById("result");           //結果表示エリアを取得
+    result.innerHTML += `・入力値： a=${a}, b=${b}<br>`;        //結果を表示
+    result.innerHTML += `　予測値： c=${pAnswer}`;
+    result.innerHTML += `(正解値： c=${rAnswer}) <br>`;
+    result.innerHTML += `　<u>誤差： ${error} %</u> <br>`;
+}
+
+const clearResult = () => {
+    //リザルト欄をクリア
+    document.getElementById("result").innerHTML = "";
+}
+</script>
+<style>
+progress {width: 300px;}
+u {color: #FF0000;}
+input[type="number"] {width: 50px;}
+#result {
+    width: 600px;
+    height: 400px;
+    padding: 10px;
+    overflow: scroll;
+    border: thin solid #CCCCCC;
+}
+</style>
+</head>
+<body onload="init()">
+<p>ディープラーニング（三平方の定理を学習）</p>
+サンプル数：<input type="number" id="sNum" value="1000">
+中間層数：<input type="number" id="layer" value="1" min="0" max="3">
+ニューロン数：<input type="number" id="neuron" value="4" min="1" max="8">
+学習回数：<input type="number" id="eNum" value="100" min="10" max="500">
+<input type="button" id="learnButton" value="開始" onclick="learn()">
+<hr>
+<progress id="progress" value="0" min="0" max="100"></progress>
+<span id="status">--</span>
+<hr>
+loss = <span id="loss">--</span><br>
+<canvas id="graph" width="600" height="160"></canvas> 
+<br>
+直角を挟む２辺
+a=<input type="number" id="a" value="3" min="1">
+b=<input type="number" id="b" value="4" min="1">
+<input type="button" id="predButton" value="予測" onclick="predict()">
+<input type="button" value="クリア" onclick="clearResult()">
+<div id="result"></div>
+</body>
+</html>
